@@ -35,7 +35,8 @@ fn dce(instrs: &mut Vec<Instruction>) {
             Instruction::Constant { dest, .. } => {
                 // if this was longer I'd factor this out into a new function
                 // to be shared between Constant and Value
-                let del = vars[dest] == 0;
+                println!("{} {:#?}", dest, vars);
+                let del = vars.get(dest).is_some_and(|v| *v == 0);
                 if del {
                     vars.remove(dest);
                 };
@@ -55,157 +56,6 @@ fn dce(instrs: &mut Vec<Instruction>) {
         })
     }
 }
-
-// // Reimpl of bril-rs Literal -- hack to allow the binary comparison of floats
-// #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-// enum BinLiteral {
-//     Int(i64),
-//     Bool(bool),
-//     Float(u64), // Bits representation of floats
-//     Char(char),
-// }
-
-// impl From<Literal> for BinLiteral {
-//     fn from(value: Literal) -> Self {
-//         match value {
-//             Literal::Int(v) => BinLiteral::Int(v),
-//             Literal::Bool(v) => BinLiteral::Bool(v),
-//             Literal::Float(v) => BinLiteral::Float(v.to_bits()),
-//             Literal::Char(v) => BinLiteral::Char(v),
-//         }
-//     }
-// }
-
-// #[derive(Clone, Debug)]
-// enum ValueTuple {
-//     Constant(String, Literal),
-//     Value(String, Vec<String>, Vec<String>, Vec<String>),
-// }
-// impl ValueTuple {
-//     fn dest(&self) -> String {
-//         // todo: if I want better perf, ref count the var names instead of cloning
-//         // (easy in principle but it just leads to annoying bril-rs threading)
-//         (match self {
-//             Self::Constant(dest, ..) => dest,
-//             Self::Value(dest, ..) => dest,
-//         })
-//         .to_string()
-//     }
-//     pub fn id_self(&self, to: String, op_type: Type) -> Instruction {
-//         Instruction::Value {
-//             args: vec![self.dest()], // Assuming dest is a reference, dereference it if necessary
-//             dest: to,
-//             funcs: Vec::with_capacity(0),
-//             labels: Vec::with_capacity(0),
-//             op: ValueOps::Id,
-//             pos: None,
-//             op_type,
-//         }
-//     }
-// }
-
-// impl PartialEq for ValueTuple {
-//     fn eq(&self, other: &Self) -> bool {
-//         match (self, other) {
-//             // assumes well formed floats (ie: no NaNs)
-//             (&ValueTuple::Constant(_, v1), &ValueTuple::Constant(_, v2)) => v1 == v2,
-//             (
-//                 &ValueTuple::Value(_, ref args1, ref labels1, ref funcs1),
-//                 &ValueTuple::Value(_, ref args2, ref labels2, ref funcs2),
-//             ) => args1 == args2 && labels1 == labels2 && funcs1 == funcs2,
-//             _ => false,
-//         }
-//     }
-// }
-
-// Note: Doesn't work -- code for this was bugfixed moved into various DFA passes.
-// pub fn lvn(mut instrs: Vec<Instruction>) -> Vec<Instruction> {
-//     // All these separate iterations are inefficient -- ideally, I should combine the passes.
-//     // let's hope the compiler's smart enough to do so as possible lol
-//     // NOTE: All these clones are quite inefficient! If I need to improve perf,
-//     // then I should modify the bril-rs code to RC all the strings.
-//     // println!("INSTR_LVN {:#?}", instrs);
-//     for instr in &mut instrs {
-//         // normalizes algebraic identities
-//         instr.normalize();
-//     }
-//     // TODO: Make more readable
-//     let mut var2num: HashMap<String, (usize, Option<Literal>)> = instrs
-//         .iter()
-//         .enumerate()
-//         .filter_map(|(i, v)| {
-//             v.dest().map(|dest| {
-//                 (
-//                     dest.clone(),
-//                     (
-//                         instrs[..i]
-//                             .iter()
-//                             .rev()
-//                             .position(|vt| vt.expr_eq(v))
-//                             .unwrap_or(i),
-//                         None,
-//                     ),
-//                 )
-//             })
-//         })
-//         .collect();
-//     // could do on same iter as above (if it isn't optimized into that)
-
-//     // common subexpression elimination and dce
-//     // indexes due to ned to separate out immutable and mutable
-//     // refernces for the borrow checker
-//     // TODO: If I wanted to fix, I need to number the vars to account for shadowing use
-//     for i in 0..instrs.len() {
-//         if let Some(dest) = instrs[i].dest() {
-//             let canon_i = var2num[dest].0;
-//             if dest == "sum1" {
-//                 println!("SUM 1 {:#?}, {}, {}", var2num, canon_i, i);
-//             }
-//             if canon_i != i {
-//                 let source = instrs[canon_i].dest().unwrap().clone();
-//                 instrs[i].id_self(source);
-//             }
-//         }
-//     }
-//     // constant folding
-//     for instr in instrs.iter() {
-//         if let Some(dest) = instr.dest() {
-//             let vt = &instrs[var2num[dest].0];
-//             println!("EXEC {:#?}", vt);
-//             if let Instruction::Value { args, .. } = vt
-//                 && let Some(arg1) = args.get(0).map(|v| var2num[v].1)
-//                 && let Some(arg2) = args.get(1).map(|v| var2num[v].1)
-//             {
-//                 var2num.get_mut(dest).unwrap().1 = vt.exec(arg1, arg2);
-//             }
-//         }
-//     }
-//     // dce
-//     // has to be run after constant folding to maximize coverage
-//     // subtle: eliminate shadowed vars which are either non canon or canon but unused
-//     let mut in_scope_vars: HashSet<String> = HashSet::new();
-//     let mut used_vars: HashSet<String> = HashSet::new();
-//     instrs
-//         .into_iter()
-//         .enumerate()
-//         .filter(|(i, instr)| {
-//             instr
-//                 .dest()
-//                 .map(|dest| {
-//                     let keep = !(in_scope_vars.contains(dest)
-//                         && (var2num[dest].0 != *i || !used_vars.contains(dest)));
-
-//                     in_scope_vars.insert(dest.clone());
-//                     if let Some(args) = instr.args() {
-//                         used_vars.extend(args.clone());
-//                     }
-//                     keep
-//                 })
-//                 .unwrap_or(false)
-//         })
-//         .map(|(_, v)| v)
-//         .collect()
-// }
 
 pub enum Direction {
     Forward,
@@ -227,7 +77,8 @@ macro_rules! worklist {
 worklist!(
     String,
     u32,
-    live,
+    // TODO: What should I name this?
+    usage_count,
     |inputs| inputs.flatten().collect::<HashMap<String, u32>>(),
     |code, mut prev| {
         // assumed numbered var names
@@ -254,16 +105,14 @@ worklist!(
     const_prop,
     |inputs| inputs.flatten().collect::<HashMap<String, Literal>>(),
     |code, mut prev| {
-        let dests: Vec<_> = code
-            .iter()
-            .filter_map(|instr| {
-                instr
-                    .dest()
-                    .map(|dest| (dest, instr.exec(instr.args(), &prev)))
-                    .and_then(|(dest, lit)| lit.map(|lit| (dest.clone(), lit)))
-            })
-            .collect();
-        prev.extend(dests);
+        // TODO: Problem is that prev is always empty
+        for instr in code {
+            if let Some(dest) = instr.dest()
+                && let Some(val) = instr.exec(instr.args(), &prev)
+            {
+                prev.insert(dest.clone(), val);
+            }
+        }
         prev
     },
     |code, cvals| {
@@ -354,11 +203,6 @@ fn worklist_func<K: Eq + hash::Hash + Clone, V: Clone>(
     (in_, out)
 }
 
-// fn fmt_df<T>(cfg: Cfg, df: (DfData<T>, DfData<T>)) -> String {
-//     let result = String::new();
-//     for block in cfg.0.node_indices() {}
-// }
-
 #[cfg(test)]
 mod tests {
     use core::{fmt, str};
@@ -414,19 +258,28 @@ mod tests {
     fn test_dfa_main<K: hash::Hash + Clone + Eq + fmt::Debug, V: Clone + fmt::Debug>(
         fname: &str,
         dfa: fn(&mut Cfg) -> (DfData<K, V>, DfData<K, V>),
-    ) -> Result<(), Box<dyn Error>> {
+        var: &K,
+    ) -> Result<V, Box<dyn Error>> {
         let prog_file = File::open(fname)?;
         let program: Program =
             parse_abstract_program_from_read(prog_file, true, true, None).try_into()?;
-        let (in_, out) = dfa(&mut Cfg::new(
+        let mut cfg = Cfg::new(
             program
                 .functions
                 .iter()
                 .find(|v| v.name == "main")
                 .expect("no main function"),
-        ));
-        println!("{:#?} {:#?}", in_.values(), out.values());
-        Ok(())
+        );
+        let (_in_, mut out) = dfa(&mut cfg);
+        cfg.exactly_last()
+            .map(|ref ni| {
+                println!("{:#?} {:#?}", out, var);
+                out.remove(ni)
+                    .unwrap()
+                    .remove(var)
+                    .expect("var not present")
+            })
+            .ok_or("not only one terminating node".into())
     }
 
     // I might be able to factor this out but I suspect
@@ -446,22 +299,6 @@ mod tests {
                 .collect()
         }
     }
-    // pub fn lvn_prog(program: &mut Program) {
-    //     for func in &mut program.functions {
-    //         func.instrs = bb(func)
-    //             .map(|b| {
-    //                 let mut elimed: Vec<Code> = lvn(b.block)
-    //                     .into_iter()
-    //                     .map(|i| Code::Instruction(i))
-    //                     .collect();
-    //                 elimed.push(b.term);
-    //                 println!("{:#?}", elimed);
-    //                 elimed
-    //             })
-    //             .flatten()
-    //             .collect();
-    //     }
-    // }
     #[test]
     fn test_dce() -> Result<(), Box<dyn Error>> {
         // TODO: Add more
@@ -470,44 +307,63 @@ mod tests {
     }
 
     // #[test]
-    // fn test_lvn() -> Result<(), Box<dyn Error>> {
+    // fn test_usage_count() -> Result<(), Box<dyn Error>> {
     //     let test_cases = [
-    //         // lazy so the Some(int) is merely the last number the program outputs
-    //         // ex: 36 -> test for 6
-    //         // includes implicit ret if none
-    //         ("clobber.bril", 9, Some(6)),
-    //         ("clobber-arg.bril", 4, None),
-    //         ("commute.bril", 7, Some(6)),
-    //         ("idchain.bril", 6, Some(4)),
-    //         ("idchain-nonlocal.bril", 8, Some(4)),
+    //         ("clobber.bril", "", 9),
+    //         ("clobber-arg.bril", "", 4),
+    //         ("commute.bril", "", 7),
+    //         ("idchain.bril", "", 6),
+    //         ("idchain-nonlocal.bril", "", 8),
     //     ];
-    //     for (tc, exp_instrs, ret) in test_cases {
+    //     for (tc, var, value) in test_cases {
     //         println!("#### \x1b[1m{}\x1b[0m", tc);
     //         assert_eq!(
-    //             test_main_len(&format!("samples/lvn/{}", tc), lvn_prog)?,
-    //             exp_instrs
+    //             test_dfa_main(
+    //                 &format!("samples/lvn/{}", tc),
+    //                 usage_count,
+    //                 &var.to_string()
+    //             )?,
+    //             value
     //         );
-    //         assert_eq!(test_out(&format!("samples/lvn/{}", tc), lvn_prog).ok(), ret);
     //     }
     //     Ok(())
     // }
+    #[test]
+    fn test_const_expr() -> Result<(), Box<dyn Error>> {
+        let test_cases = [
+            ("clobber.bril", "prod2", 36),
+            ("clobber-arg.bril", "b", 3),
+            ("commute.bril", "prod", 36),
+            ("idchain.bril", "copy3", 4),
+            ("idchain-nonlocal.bril", "copy3", 4),
+        ];
+        for (tc, var, value) in test_cases {
+            println!("#### \x1b[1m{}\x1b[0m", tc);
+            assert_eq!(
+                test_dfa_main(&format!("samples/lvn/{}", tc), const_prop, &var.to_string())?,
+                bril_rs::Literal::Int(value)
+            );
+        }
+        Ok(())
+    }
 
-    // #[test]
-    // fn test_live() -> Result<(), Box<dyn Error>> {
-    //     let test_cases = [
-    //         // lazy so the Some(int) is merely the last number the program outputs
-    //         // ex: 36 -> test for 6
-    //         // includes implicit ret if none
-    //         ("clobber.bril", 9),
-    //         ("clobber-arg.bril", 4),
-    //         ("commute.bril", 7),
-    //         ("idchain.bril", 6),
-    //         ("idchain-nonlocal.bril", 8),
-    //     ];
-    //     for (tc, exp_instrs) in test_cases {
-    //         println!("#### \x1b[1m{}\x1b[0m", tc);
-    //         // assert_eq!(test_dfa_main(&format!("samples/lvn/{}", tc), live)?, ());
-    //     }
-    //     Ok(())
-    // }
+    #[test]
+    fn test_cse() -> Result<(), Box<dyn Error>> {
+        let test_cases = [
+            ("clobber.bril", "prod2", 36),
+            ("clobber-arg.bril", "b", 3),
+            ("commute.bril", "prod", 36),
+            ("idchain.bril", "copy3", 4),
+            ("idchain-nonlocal.bril", "copy3", 4),
+        ];
+        for (tc, var, value) in test_cases {
+            println!("#### \x1b[1m{}\x1b[0m", tc);
+            assert_eq!(
+                test_dfa_main(&format!("samples/lvn/{}", tc), const_prop, &var.to_string())?,
+                bril_rs::Literal::Int(value)
+            );
+        }
+        Ok(())
+    }
+    // TODO: Test CSE.
 }
